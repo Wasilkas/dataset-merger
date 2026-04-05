@@ -1,0 +1,5 @@
+image_name,instance_label,bbox_x_tl,bbox_y_tl,bbox_x_br,bbox_y_br
+img1.jpg,car,100,100,200,200
+img1.jpg,person,300,300,350,400
+img2.jpg,car,50,50,150,150
+img3.jpg,dog,10,10,60,60
