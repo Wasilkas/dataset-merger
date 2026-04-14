@@ -2,13 +2,31 @@
 Majority voting on box clusters.
 
 For each cluster (connected component from matching.py):
-- If the fraction of distinct agreeing sources exceeds 50% of total annotators → keep, merge boxes.
-- Otherwise → questionable (emit with QUESTIONABLE_SUFFIX appended to the class label).
 
-Special case:
-- If a single annotator contributed 2+ boxes to the cluster ("dirty cluster"),
-  the annotator's intent is ambiguous. Mark the entire cluster as questionable.
-- If N == 1, no voting is performed; return all annotations unchanged.
+Rule 1 — Class voting:
+  The group's class is determined by majority vote across boxes. Tie-break: mark as
+  questionable (falls under Rule 4 since a 50/50 split implies class disagreement).
+
+Rule 2 — Same-class, majority annotators → one merged normal box.
+  When all boxes in the cluster share the same class AND the number of distinct
+  annotator sources exceeds 50% of total annotators, collapse into a single output
+  box with averaged corner coordinates. No individual source boxes are emitted.
+
+Rule 3 — Singleton → questionable.
+  A cluster with exactly one box (only one annotator drew it) is emitted with a
+  questionable label using the original box coordinates.
+
+Rule 4 — Mixed classes → all boxes individually questionable.
+  If the cluster contains boxes of more than one class (i.e. unanimous class
+  agreement is absent), emit every source box individually with its original
+  class label suffixed by QUESTIONABLE_SUFFIX. Coordinates are NOT averaged.
+  This also covers the 50/50 tie-break for class voting.
+
+Additional cases preserved from prior behaviour:
+- Dirty cluster (one annotator contributed 2+ boxes): always questionable,
+  single averaged box, majority class label. Annotator intent is ambiguous.
+- N == 1: no voting is performed; return all annotations unchanged.
+- Same class, not majority annotators: questionable averaged box.
 """
 
 from __future__ import annotations
@@ -44,13 +62,14 @@ def vote(
     clusters: list[pd.DataFrame],
     n_annotators: int,
     image: str,
-    cls: str,
     cfg: MergeConfig,
 ) -> list[dict]:
     """
-    Apply majority voting to a list of clusters for one (image, class) group.
+    Apply voting rules to a list of clusters for one image.
 
-    Returns a list of output row dicts with keys matching OUTPUT_COLS.
+    Each cluster DataFrame must contain COL_LABEL so that class agreement can be
+    assessed across annotators. Returns a list of output row dicts with keys
+    matching OUTPUT_COLS.
     """
     if n_annotators == 1:
         # Nothing to vote on — return all boxes as-is.
@@ -59,7 +78,7 @@ def vote(
             for _, row in cluster.iterrows():
                 results.append({
                     COL_IMAGE: image,
-                    COL_LABEL: cls,
+                    COL_LABEL: row[COL_LABEL],
                     COL_X1: row[COL_X1],
                     COL_Y1: row[COL_Y1],
                     COL_X2: row[COL_X2],
@@ -69,19 +88,62 @@ def vote(
 
     results = []
     for cluster in clusters:
-        questionable = _is_dirty(cluster)
+        # Rule 3: Singleton group → questionable with original class.
+        if len(cluster) == 1:
+            if not cfg.no_questionable:
+                row = cluster.iloc[0]
+                results.append({
+                    COL_IMAGE: image,
+                    COL_LABEL: f"{row[COL_LABEL]}{QUESTIONABLE_SUFFIX}",
+                    COL_X1: row[COL_X1],
+                    COL_Y1: row[COL_Y1],
+                    COL_X2: row[COL_X2],
+                    COL_Y2: row[COL_Y2],
+                })
+            continue
+
+        # Dirty cluster: one annotator contributed 2+ boxes — intent is ambiguous.
+        if _is_dirty(cluster):
+            if not cfg.no_questionable:
+                majority_cls = cluster[COL_LABEL].mode()[0]
+                avg = _average_boxes(cluster)
+                results.append({
+                    COL_IMAGE: image,
+                    COL_LABEL: f"{majority_cls}{QUESTIONABLE_SUFFIX}",
+                    **avg,
+                })
+            continue
+
+        # Rule 4: Mixed classes → emit every box individually as questionable.
+        # This also handles the 50/50 tie-break for class voting (2 different classes
+        # in a group of 2 — no class has a strict majority, so all are questionable).
+        if cluster[COL_LABEL].nunique() > 1:
+            if not cfg.no_questionable:
+                for _, row in cluster.iterrows():
+                    results.append({
+                        COL_IMAGE: image,
+                        COL_LABEL: f"{row[COL_LABEL]}{QUESTIONABLE_SUFFIX}",
+                        COL_X1: row[COL_X1],
+                        COL_Y1: row[COL_Y1],
+                        COL_X2: row[COL_X2],
+                        COL_Y2: row[COL_Y2],
+                    })
+            continue
+
+        # All boxes share the same class — apply majority-of-annotators voting.
+        cls = cluster[COL_LABEL].iloc[0]
         support = cluster[COL_SOURCE].nunique()
         majority = support > n_annotators / 2.0
 
-        if not questionable and majority:
-            # Confirmed detection — average all boxes in the cluster.
+        if majority:
+            # Rule 2: Same class, majority → one normal merged box with averaged coords.
             avg = _average_boxes(cluster)
             results.append({COL_IMAGE: image, COL_LABEL: cls, **avg})
         else:
-            if cfg.no_questionable:
-                continue  # drop uncertain detections
-            avg = _average_boxes(cluster)
-            results.append({COL_IMAGE: image, COL_LABEL: f"{cls}{QUESTIONABLE_SUFFIX}", **avg})
+            # Same class but not enough annotators agree → questionable averaged box.
+            if not cfg.no_questionable:
+                avg = _average_boxes(cluster)
+                results.append({COL_IMAGE: image, COL_LABEL: f"{cls}{QUESTIONABLE_SUFFIX}", **avg})
 
     return results
 
@@ -89,17 +151,18 @@ def vote(
 def process_all(
     df: pd.DataFrame,
     n_annotators: int,
-    clusters_by_group: dict[tuple[str, str], list[pd.DataFrame]],
+    clusters_by_image: dict[str, list[pd.DataFrame]],
     cfg: MergeConfig,
 ) -> pd.DataFrame:
     """
-    Run voting for all (image, class) groups and return the merged output DataFrame.
+    Run voting for all images and return the merged output DataFrame.
 
-    clusters_by_group: {(image, class): [cluster_df, ...]}
+    clusters_by_image: {image_name: [cluster_df, ...]}
+    Each cluster_df must contain COL_LABEL.
     """
     rows = []
-    for (image, cls), clusters in clusters_by_group.items():
-        rows.extend(vote(clusters, n_annotators, image, cls, cfg))
+    for image, clusters in clusters_by_image.items():
+        rows.extend(vote(clusters, n_annotators, image, cfg))
 
     if not rows:
         return pd.DataFrame(columns=OUTPUT_COLS)

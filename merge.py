@@ -97,14 +97,14 @@ def main(files, output, iou_threshold, dist_threshold, no_questionable, kappa, i
     if cfg.compute_kappa:
         print_kappa_report(df, cfg)
 
-    clusters_by_group: dict[tuple[str, str], list] = {}
-    for (image, cls), group in df.groupby([COL_IMAGE, COL_LABEL], sort=False):
-        clusters_by_group[(image, cls)] = build_clusters(group, cfg)
+    clusters_by_image: dict[str, list] = {}
+    for image, image_df in df.groupby(COL_IMAGE, sort=False):
+        clusters_by_image[image] = build_clusters(image_df, cfg)
 
-    total_clusters = sum(len(v) for v in clusters_by_group.values())
-    click.echo(f"Found {total_clusters} object candidate(s) across {len(clusters_by_group)} ({COL_IMAGE}, {COL_LABEL}) group(s)")
+    total_clusters = sum(len(v) for v in clusters_by_image.values())
+    click.echo(f"Found {total_clusters} object candidate(s) across {len(clusters_by_image)} {COL_IMAGE} group(s)")
 
-    result = process_all(df, n_annotators, clusters_by_group, cfg)
+    result = process_all(df, n_annotators, clusters_by_image, cfg)
 
     confirmed = result[~result[COL_LABEL].str.endswith(QUESTIONABLE_SUFFIX)]
     questionable = result[result[COL_LABEL].str.endswith(QUESTIONABLE_SUFFIX)]
