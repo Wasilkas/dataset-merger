@@ -16,7 +16,7 @@ uv add <package>                       # add a dependency (updates pyproject.tom
 
 ```bash
 # Run the merger
-python merge.py annotator1.csv annotator2.csv [annotator3.csv ...] -o merged.csv
+python src/merge.py annotator1.csv annotator2.csv [annotator3.csv ...] -o merged.csv
 
 # Lint (ruff)
 uvx ruff check .
@@ -38,18 +38,18 @@ Linear pipeline: **load → cluster → vote → write**
 
 | File | Responsibility |
 |---|---|
-| [config.py](config.py) | `MergeConfig` dataclass — all thresholds and flags |
-| [io.py](io.py) | CSV load/validate (adds `source` column), write output |
-| [matching.py](matching.py) | IoU, center distance, union-find clustering |
-| [voting.py](voting.py) | Majority vote, box averaging, questionable flagging |
-| [kappa.py](kappa.py) | Pixel-wise Cohen's kappa (class-agnostic and class-specific) |
-| [merge.py](merge.py) | `click` CLI, orchestrates the pipeline |
+| [src/config.py](src/config.py) | `MergeConfig` dataclass — all thresholds and flags |
+| [src/io.py](src/io.py) | CSV load/validate (adds `source` column), write output |
+| [src/matching.py](src/matching.py) | IoU, center distance, union-find clustering |
+| [src/voting.py](src/voting.py) | Majority vote, box averaging, questionable flagging |
+| [src/kappa.py](src/kappa.py) | Pixel-wise Cohen's kappa (class-agnostic and class-specific) |
+| [src/merge.py](src/merge.py) | `click` CLI, orchestrates the pipeline |
 
 ## Key Algorithm Details
 
-**Box matching** (`matching.py`): Two boxes (same image, same class) are the same object if `IoU > iou_threshold` **OR** `center_distance < dist_threshold`. Uses union-find to find connected components — matching is transitive (A↔B, B↔C → A/B/C are one cluster even if A↔C don't directly match).
+**Box matching** (`src/matching.py`): Two boxes (same image, same class) are the same object if `IoU > iou_threshold` **OR** `center_distance < dist_threshold`. Uses union-find to find connected components — matching is transitive (A↔B, B↔C → A/B/C are one cluster even if A↔C don't directly match).
 
-**Voting** (`voting.py`): A cluster is kept if `distinct_sources > N / 2.0` (strict majority). For N=2 this requires both annotators to agree. "Dirty clusters" — where one annotator contributed 2+ boxes — are always questionable.
+**Voting** (`src/voting.py`): A cluster is kept if `distinct_sources > N / 2.0` (strict majority). For N=2 this requires both annotators to agree. "Dirty clusters" — where one annotator contributed 2+ boxes — are always questionable.
 
 **Questionable objects**: Emitted with `{class}_questionable` suffix. Suppressed with `--no-questionable`.
 
@@ -63,7 +63,7 @@ image_name, instance_label, bbox_x_tl, bbox_y_tl, bbox_x_br, bbox_y_br
 ## CLI Options
 
 ```
-python merge.py a.csv b.csv [c.csv ...]
+python src/merge.py a.csv b.csv [c.csv ...]
   -o / --output PATH          Output file (default: merged.csv)
   --iou-threshold FLOAT       Default: 0.5
   --dist-threshold FLOAT      Center distance in pixels, default: 20.0
@@ -74,7 +74,7 @@ python merge.py a.csv b.csv [c.csv ...]
   --config PATH               YAML config file (CLI flags override)
 ```
 
-Run `python merge.py --help` for full usage. Click handles exit codes automatically.
+Run `python src/merge.py --help` for full usage. Click handles exit codes automatically.
 
 ## Code Style
 

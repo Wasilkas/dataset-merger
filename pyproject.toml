@@ -15,7 +15,7 @@ dependencies = [
 dev = ["pytest>=7.0"]
 
 [project.scripts]
-dataset-merger = "merge:main"
+dataset-merger = "src.merge:main"
 
 [tool.uv]
 dev-dependencies = ["pytest>=7.0", "ruff>=0.4"]
@@ -30,3 +30,4 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
