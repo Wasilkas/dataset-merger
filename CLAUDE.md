@@ -42,7 +42,6 @@ Linear pipeline: **load → cluster → vote → write**
 | [src/io.py](src/io.py) | CSV load/validate (adds `source` column), write output |
 | [src/matching.py](src/matching.py) | IoU, center distance, union-find clustering |
 | [src/voting.py](src/voting.py) | Majority vote, box averaging, questionable flagging |
-| [src/kappa.py](src/kappa.py) | Pixel-wise Cohen's kappa (class-agnostic and class-specific) |
 | [src/merge.py](src/merge.py) | `click` CLI, orchestrates the pipeline |
 
 ## Key Algorithm Details
@@ -68,9 +67,7 @@ python src/merge.py a.csv b.csv [c.csv ...]
   --iou-threshold FLOAT       Default: 0.5
   --dist-threshold FLOAT      Center distance in pixels, default: 20.0
   --no-questionable           Drop uncertain detections
-  --kappa                     Compute and print pixel-wise Cohen's kappa (both variants)
-  --image-width INT           Canvas width for kappa (default: inferred from annotations)
-  --image-height INT          Canvas height for kappa (default: inferred from annotations)
+  --controversial-report      Write controversial_report.csv alongside the merged output
   --config PATH               YAML config file (CLI flags override)
 ```
 

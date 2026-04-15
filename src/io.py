@@ -60,3 +60,20 @@ def write_output(df: pd.DataFrame, path: str) -> None:
     """Write the merged output CSV, dropping the 'source' column if present."""
     df[OUTPUT_COLS].to_csv(path, index=False)
     print(f"Wrote {len(df)} annotations to {path}")
+
+
+def write_controversy_report(
+    records: list[dict],
+    path: str,
+    source_names: list[str],
+) -> None:
+    """Write the controversial cases report CSV.
+
+    Columns: image_name, annotator_1, annotator_2, ..., annotator_N.
+    Cell values are class label strings or empty (None → blank cell) when an
+    annotator did not place a bbox on that object.
+    """
+    columns = ["image_name"] + [f"annotator_{i}" for i in range(1, len(source_names) + 1)]
+    df = pd.DataFrame(records, columns=columns) if records else pd.DataFrame(columns=columns)
+    df.to_csv(path, index=False)
+    print(f"Wrote {len(df)} controversial case(s) to {path}")

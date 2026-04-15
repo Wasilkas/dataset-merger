@@ -172,3 +172,65 @@ def process_all(
     for col in COORD_COLS:
         result[col] = result[col].round(2)
     return result.sort_values([COL_IMAGE, COL_LABEL]).reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Controversial cases report
+# ---------------------------------------------------------------------------
+
+def _is_controversial(cluster: pd.DataFrame, n_annotators: int) -> bool:
+    """Return True if this cluster should appear in the controversial cases report.
+
+    Matches the same conditions that cause a cluster to produce questionable output:
+    singleton, dirty, mixed classes, or same class without majority support.
+    """
+    if len(cluster) == 1:
+        return True  # Rule 3: only one annotator drew this object
+    if _is_dirty(cluster):
+        return True  # one annotator contributed 2+ boxes — ambiguous
+    if cluster[COL_LABEL].nunique() > 1:
+        return True  # Rule 4: annotators disagree on class
+    # Same class — controversial if not a strict majority of annotators agree
+    return cluster[COL_SOURCE].nunique() <= n_annotators / 2.0
+
+
+def _make_controversy_row(
+    cluster: pd.DataFrame,
+    image: str,
+    source_names: list[str],
+) -> dict:
+    """Build one controversy report row from a cluster.
+
+    Each cell is the class label that annotator assigned, or None if they
+    contributed no box to this cluster. For dirty annotators (2+ boxes in one
+    cluster), the modal class is used.
+    """
+    source_to_class: dict[str, str] = {}
+    for source, grp in cluster.groupby(COL_SOURCE):
+        source_to_class[source] = grp[COL_LABEL].mode()[0]
+
+    row: dict = {"image_name": image}
+    for i, name in enumerate(source_names, 1):
+        row[f"annotator_{i}"] = source_to_class.get(name)  # None if absent
+    return row
+
+
+def collect_controversy_records(
+    clusters_by_image: dict[str, list[pd.DataFrame]],
+    n_annotators: int,
+    source_names: list[str],
+) -> list[dict]:
+    """Return one row per controversial cluster across all images, in image order.
+
+    A record has keys: image_name, annotator_1, annotator_2, ..., annotator_N.
+    Cells are class label strings or None when an annotator did not label that object.
+    Returns an empty list when n_annotators == 1 (nothing to compare).
+    """
+    if n_annotators == 1:
+        return []
+    records = []
+    for image, clusters in clusters_by_image.items():
+        for cluster in clusters:
+            if _is_controversial(cluster, n_annotators):
+                records.append(_make_controversy_row(cluster, image, source_names))
+    return records

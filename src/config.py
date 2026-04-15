@@ -21,16 +21,10 @@ class MergeConfig:
     dist_threshold: float = 20.0
     no_questionable: bool = False
     output: str = "merged.csv"
-    compute_kappa: bool = False
-    image_width: int | None = None
-    image_height: int | None = None
+    controversial_report: bool = False
 
     def validate(self) -> None:
         if not (0.0 < self.iou_threshold <= 1.0):
             raise ValueError(f"iou_threshold must be in (0, 1], got {self.iou_threshold}")
         if self.dist_threshold < 0:
             raise ValueError(f"dist_threshold must be >= 0, got {self.dist_threshold}")
-        if self.image_width is not None and self.image_width <= 0:
-            raise ValueError(f"image_width must be > 0, got {self.image_width}")
-        if self.image_height is not None and self.image_height <= 0:
-            raise ValueError(f"image_height must be > 0, got {self.image_height}")

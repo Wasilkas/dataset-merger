@@ -5,10 +5,11 @@ import click
 import yaml
 
 from config import COL_IMAGE, COL_LABEL, QUESTIONABLE_SUFFIX, MergeConfig
-from io import load_all, write_output
-from kappa import print_kappa_report
+from pathlib import Path
+
+from io import load_all, write_controversy_report, write_output
 from matching import build_clusters
-from voting import process_all
+from voting import collect_controversy_records, process_all
 
 
 def _load_config_file(path: str) -> dict:
@@ -22,9 +23,7 @@ def _build_config(
     iou_threshold: float | None,
     dist_threshold: float | None,
     no_questionable: bool,
-    kappa: bool,
-    image_width: int | None,
-    image_height: int | None,
+    controversial_report: bool = False,
 ) -> MergeConfig:
     cfg = MergeConfig()
 
@@ -38,12 +37,6 @@ def _build_config(
             cfg.output = file_cfg["output"]
         if "no_questionable" in file_cfg:
             cfg.no_questionable = bool(file_cfg["no_questionable"])
-        if "compute_kappa" in file_cfg:
-            cfg.compute_kappa = bool(file_cfg["compute_kappa"])
-        if "image_width" in file_cfg:
-            cfg.image_width = int(file_cfg["image_width"])
-        if "image_height" in file_cfg:
-            cfg.image_height = int(file_cfg["image_height"])
 
     if output is not None:
         cfg.output = output
@@ -53,12 +46,8 @@ def _build_config(
         cfg.dist_threshold = dist_threshold
     if no_questionable:
         cfg.no_questionable = True
-    if kappa:
-        cfg.compute_kappa = True
-    if image_width is not None:
-        cfg.image_width = image_width
-    if image_height is not None:
-        cfg.image_height = image_height
+    if controversial_report:
+        cfg.controversial_report = True
 
     return cfg
 
@@ -69,15 +58,13 @@ def _build_config(
 @click.option("--iou-threshold", default=None, type=float, help="IoU threshold for box matching (default: 0.5)")
 @click.option("--dist-threshold", default=None, type=float, help="Center distance threshold in pixels (default: 20.0)")
 @click.option("--no-questionable", is_flag=True, help="Drop questionable objects instead of flagging them")
-@click.option("--kappa", is_flag=True, help="Compute pixel-wise Cohen's kappa (class-agnostic and class-specific)")
-@click.option("--image-width", default=None, type=int, help="Canvas width for kappa in pixels (default: inferred from annotations)")
-@click.option("--image-height", default=None, type=int, help="Canvas height for kappa in pixels (default: inferred from annotations)")
 @click.option("--config", "config_path", default=None, type=click.Path(exists=True), help="YAML config file (CLI flags override)")
-def main(files, output, iou_threshold, dist_threshold, no_questionable, kappa, image_width, image_height, config_path):
+@click.option("--controversial-report", is_flag=True, help="Write controversial_report.csv alongside the merged output")
+def main(files, output, iou_threshold, dist_threshold, no_questionable, config_path, controversial_report):
     if len(files) < 2:
         raise click.UsageError("At least 2 annotator CSV files are required.")
 
-    cfg = _build_config(config_path, output, iou_threshold, dist_threshold, no_questionable, kappa, image_width, image_height)
+    cfg = _build_config(config_path, output, iou_threshold, dist_threshold, no_questionable, controversial_report)
 
     try:
         cfg.validate()
@@ -94,9 +81,6 @@ def main(files, output, iou_threshold, dist_threshold, no_questionable, kappa, i
         f"no_questionable={cfg.no_questionable}"
     )
 
-    if cfg.compute_kappa:
-        print_kappa_report(df, cfg)
-
     clusters_by_image: dict[str, list] = {}
     for image, image_df in df.groupby(COL_IMAGE, sort=False):
         clusters_by_image[image] = build_clusters(image_df, cfg)
@@ -111,6 +95,11 @@ def main(files, output, iou_threshold, dist_threshold, no_questionable, kappa, i
     click.echo(f"Confirmed: {len(confirmed)}  |  Questionable: {len(questionable)}")
 
     write_output(result, cfg.output)
+
+    if cfg.controversial_report:
+        report_path = str(Path(cfg.output).parent / "controversial_report.csv")
+        records = collect_controversy_records(clusters_by_image, n_annotators, source_names)
+        write_controversy_report(records, report_path, source_names)
 
 
 if __name__ == "__main__":
