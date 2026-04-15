@@ -4,10 +4,10 @@ A CLI tool for merging object detection annotations from multiple annotators int
 
 ## Features
 
-- **Spatial matching** — boxes of the same class on the same image are matched via IoU and/or center distance, so slightly different draws of the same object are treated as one
+- **Cross-class spatial matching** — boxes across annotators are matched by IoU and/or center distance regardless of class, so disagreements on class label are detected rather than silently split
 - **Majority voting** — an object is kept only if more than 50% of annotators agree it exists; below that it is flagged as questionable
 - **Questionable flagging** — uncertain detections are kept with a `_questionable` suffix on their class label instead of being silently dropped
-- **Cohen's kappa** — pixel-wise inter-annotator agreement measured in two modes: class-agnostic (object vs. background) and class-specific
+- **Controversial cases report** — optional CSV listing every questionable cluster with the per-annotator class label (or blank if that annotator did not label the object)
 
 ## CSV Schema
 
@@ -40,7 +40,7 @@ uv sync
 ## Usage
 
 ```bash
-python merge.py annotator_a.csv annotator_b.csv [annotator_c.csv ...] [OPTIONS]
+python src/merge.py annotator_a.csv annotator_b.csv [annotator_c.csv ...] [OPTIONS]
 ```
 
 ### Options
@@ -51,28 +51,26 @@ python merge.py annotator_a.csv annotator_b.csv [annotator_c.csv ...] [OPTIONS]
 | `--iou-threshold FLOAT` | `0.5` | IoU threshold for matching two boxes as the same object |
 | `--dist-threshold FLOAT` | `20.0` | Center distance threshold in pixels (fallback for small boxes) |
 | `--no-questionable` | off | Drop uncertain detections instead of flagging them |
-| `--kappa` | off | Compute and print pixel-wise Cohen's kappa |
-| `--image-width INT` | inferred | Canvas width in pixels for kappa computation |
-| `--image-height INT` | inferred | Canvas height in pixels for kappa computation |
+| `--controversial-report` | off | Write `controversial_report.csv` alongside the merged output |
 | `--config PATH` | — | YAML config file (CLI flags override file values) |
 
 ### Examples
 
 ```bash
 # Basic merge of two annotators
-python merge.py alice.csv bob.csv -o merged.csv
+python src/merge.py alice.csv bob.csv -o merged.csv
 
 # Three annotators with custom matching thresholds
-python merge.py a.csv b.csv c.csv --iou-threshold 0.4 --dist-threshold 15
+python src/merge.py a.csv b.csv c.csv --iou-threshold 0.4 --dist-threshold 15
 
 # Drop uncertain detections entirely
-python merge.py a.csv b.csv --no-questionable
+python src/merge.py a.csv b.csv --no-questionable
 
-# Compute inter-annotator agreement before merging
-python merge.py a.csv b.csv c.csv --kappa --image-width 1920 --image-height 1080
+# Merge and write a report of every disputed object
+python src/merge.py a.csv b.csv c.csv -o out/merged.csv --controversial-report
 
 # Use a config file
-python merge.py a.csv b.csv --config config.yaml
+python src/merge.py a.csv b.csv --config config.yaml
 ```
 
 ### Config file (YAML)
@@ -82,20 +80,25 @@ iou_threshold: 0.5
 dist_threshold: 20.0
 output: merged.csv
 no_questionable: false
-compute_kappa: true
-image_width: 1920
-image_height: 1080
 ```
 
 ## Voting Logic
 
-For each group of boxes with the same `(image_name, instance_label)`:
+For each image, all boxes across all annotators are clustered together (regardless of class label):
 
 1. Boxes are linked into clusters via IoU > threshold **or** center distance < threshold (OR condition handles tiny boxes where IoU is unreliable)
 2. Clusters are found using connected components (union-find), so matching is transitive
-3. A cluster with support from **more than 50%** of annotators → merged into one box (coordinate average)
-4. A cluster below majority → emitted with `_questionable` class suffix
-5. A "dirty cluster" (one annotator drew 2+ boxes that merged) → always questionable
+3. Per cluster, four rules apply:
+
+| Situation | Output |
+|---|---|
+| All annotators agree on class, strict majority present | One merged box (coordinate average), normal label |
+| Only one annotator drew this object (singleton) | Original box, `_questionable` label |
+| Annotators drew boxes here but disagree on class | Every source box emitted individually, each `_questionable` |
+| Same class but below majority threshold | One merged box, `_questionable` label |
+| One annotator drew 2+ overlapping boxes (dirty cluster) | One averaged box, `_questionable` label |
+
+Class tie-breaks (50/50 split) fall under the "disagree on class" rule — all boxes are emitted as questionable.
 
 | Annotators (N) | Keep if support ≥ | Questionable if support ≤ |
 |---|---|---|
@@ -103,14 +106,20 @@ For each group of boxes with the same `(image_name, instance_label)`:
 | 3 | 2 | 1 |
 | 4 | 3 | 2 |
 
-## Inter-annotator Agreement (Cohen's Kappa)
+## Controversial Cases Report
 
-When `--kappa` is used, each annotator's boxes are rasterised onto a pixel canvas and kappa is computed pairwise over all pixels across all images.
+When `--controversial-report` is passed, a second CSV (`controversial_report.csv`) is written to the same directory as the output. It contains one row per questionable cluster:
 
-- **Class-agnostic**: each pixel is binary — covered by any box (`1`) or background (`0`)
-- **Class-specific**: each pixel carries the class ID — measures whether annotators agree on both presence and class
+```
+image_name,annotator_1,annotator_2,annotator_3
+frame_042.jpg,car,car,
+frame_042.jpg,truck,,
+frame_101.jpg,car,bus,car
+```
 
-Canvas size is inferred from annotation extents by default; use `--image-width` / `--image-height` for more accurate background estimation.
+- `annotator_N` is the class label that annotator N assigned to that object
+- Blank cell means that annotator did not place a box on this object
+- Annotator column order matches the input file order
 
 ## Development
 
